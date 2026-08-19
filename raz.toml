@@ -1,0 +1,27 @@
+# Copyright 2026 Mario Vinciguerra
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "raz-package-demo"
+version = "0.1.0"
+kind = "executable"
+source = "src"
+entry = "src/main.rz"
+
+[dependencies]
+regex = ">=0.2.1"
+
+[dev-dependencies]
+
+[features]
+default = []
+
+[profile.debug]
+optimization = 0
+debug = true
+incremental = true
+
+[profile.release]
+optimization = 3
+debug = false
+incremental = true

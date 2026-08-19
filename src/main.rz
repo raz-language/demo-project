@@ -1,0 +1,81 @@
+// Copyright 2026 Mario Vinciguerra
+// SPDX-License-Identifier: Apache-2.0
+
+import regex::program;
+import regex::engine;
+
+extern fn raz_rt_alloc(i64 size) -> usize;
+extern fn raz_rt_dealloc(usize pointer);
+extern fn raz_rt_store_u8(usize address, i64 value) -> i64;
+
+fn make_pattern() -> usize {
+    usize pattern = raz_rt_alloc(5);
+
+    if (pattern == 0) {
+        return 0;
+    }
+    raz_rt_store_u8(pattern + 0, 94);
+    raz_rt_store_u8(pattern + 1, 97);
+    raz_rt_store_u8(pattern + 2, 43);
+    raz_rt_store_u8(pattern + 3, 98);
+    raz_rt_store_u8(pattern + 4, 36);
+    return pattern;
+}
+
+fn make_input() -> usize {
+    usize input = raz_rt_alloc(4);
+
+    if (input == 0) {
+        return 0;
+    }
+    raz_rt_store_u8(input + 0, 97);
+    raz_rt_store_u8(input + 1, 97);
+    raz_rt_store_u8(input + 2, 97);
+    raz_rt_store_u8(input + 3, 98);
+    return input;
+}
+
+fn test_regex_match() -> i64 {
+    usize pattern = make_pattern();
+    usize input = make_input();
+    usize program_storage = raz_rt_alloc(2048 * 8);
+
+    if (pattern == 0 || input == 0 || program_storage == 0) {
+        if (pattern != 0) {
+            raz_rt_dealloc(pattern);
+        }
+        if (input != 0) {
+            raz_rt_dealloc(input);
+        }
+        if (program_storage != 0) {
+            raz_rt_dealloc(program_storage);
+        }
+        return 10;
+    }
+
+    regex::program::Regex compiled;
+
+    if (!regex::program::compile(pattern, 5, program_storage, 2048, &mut compiled)) {
+        raz_rt_dealloc(program_storage);
+        raz_rt_dealloc(input);
+        raz_rt_dealloc(pattern);
+        return 11;
+    }
+
+    regex::program::Match found = regex::engine::find(&compiled, input, 4);
+    i64 status = 0;
+
+    if (!found.matched) {
+        status = 12;
+    } else if (found.start != 0 || found.end != 4) {
+        status = 13;
+    }
+    raz_rt_dealloc(program_storage);
+    raz_rt_dealloc(input);
+    raz_rt_dealloc(pattern);
+    return status;
+}
+
+fn main() -> i64 {
+    return test_regex_match();
+}
