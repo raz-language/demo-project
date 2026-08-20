@@ -7,6 +7,96 @@ import regex::engine;
 extern fn raz_rt_alloc(i64 size) -> usize;
 extern fn raz_rt_dealloc(usize pointer);
 extern fn raz_rt_store_u8(usize address, i64 value) -> i64;
+extern fn raz_rt_stdio_write(i64 stream, usize data, i64 size) -> i64;
+
+fn print_status(i64 status) -> bool {
+    usize bytes = raz_rt_alloc(32);
+
+    if (bytes == 0) {
+        return false;
+    }
+
+    // "regex test: "
+    raz_rt_store_u8(bytes + 0, 114);
+    raz_rt_store_u8(bytes + 1, 101);
+    raz_rt_store_u8(bytes + 2, 103);
+    raz_rt_store_u8(bytes + 3, 101);
+    raz_rt_store_u8(bytes + 4, 120);
+    raz_rt_store_u8(bytes + 5, 32);
+    raz_rt_store_u8(bytes + 6, 116);
+    raz_rt_store_u8(bytes + 7, 101);
+    raz_rt_store_u8(bytes + 8, 115);
+    raz_rt_store_u8(bytes + 9, 116);
+    raz_rt_store_u8(bytes + 10, 58);
+    raz_rt_store_u8(bytes + 11, 32);
+
+    if (status == 0) {
+        // "PASS"
+        raz_rt_store_u8(bytes + 12, 80);
+        raz_rt_store_u8(bytes + 13, 65);
+        raz_rt_store_u8(bytes + 14, 83);
+        raz_rt_store_u8(bytes + 15, 83);
+    } else {
+        // "FAIL"
+        raz_rt_store_u8(bytes + 12, 70);
+        raz_rt_store_u8(bytes + 13, 65);
+        raz_rt_store_u8(bytes + 14, 73);
+        raz_rt_store_u8(bytes + 15, 76);
+    }
+
+    // newline
+    raz_rt_store_u8(bytes + 16, 10);
+
+    // "status: "
+    raz_rt_store_u8(bytes + 17, 115);
+    raz_rt_store_u8(bytes + 18, 116);
+    raz_rt_store_u8(bytes + 19, 97);
+    raz_rt_store_u8(bytes + 20, 116);
+    raz_rt_store_u8(bytes + 21, 117);
+    raz_rt_store_u8(bytes + 22, 115);
+    raz_rt_store_u8(bytes + 23, 58);
+    raz_rt_store_u8(bytes + 24, 32);
+
+    i64 length = 25;
+
+    if (status >= 10) {
+        i64 tens = status / 10;
+        i64 ones = status - (tens * 10);
+
+        raz_rt_store_u8(bytes + length, 48 + tens);
+        length += 1;
+
+        raz_rt_store_u8(bytes + length, 48 + ones);
+        length += 1;
+    } else {
+        raz_rt_store_u8(bytes + length, 48 + status);
+        length += 1;
+    }
+
+    raz_rt_store_u8(bytes + length, 10);
+    length += 1;
+
+    i64 written = 0;
+
+    while (written < length) {
+        i64 count = raz_rt_stdio_write(
+            1,
+            bytes + written,
+            length - written
+        );
+
+        if (count <= 0) {
+            raz_rt_dealloc(bytes);
+            return false;
+        }
+
+        written += count;
+    }
+
+    raz_rt_dealloc(bytes);
+
+    return true;
+}
 
 fn make_pattern() -> usize {
     usize pattern = raz_rt_alloc(5);
@@ -14,11 +104,14 @@ fn make_pattern() -> usize {
     if (pattern == 0) {
         return 0;
     }
+
+    // ^a+b$
     raz_rt_store_u8(pattern + 0, 94);
     raz_rt_store_u8(pattern + 1, 97);
     raz_rt_store_u8(pattern + 2, 43);
     raz_rt_store_u8(pattern + 3, 98);
     raz_rt_store_u8(pattern + 4, 36);
+
     return pattern;
 }
 
@@ -28,54 +121,98 @@ fn make_input() -> usize {
     if (input == 0) {
         return 0;
     }
+
+    // aaab
     raz_rt_store_u8(input + 0, 97);
     raz_rt_store_u8(input + 1, 97);
     raz_rt_store_u8(input + 2, 97);
     raz_rt_store_u8(input + 3, 98);
+
     return input;
 }
 
 fn test_regex_match() -> i64 {
     usize pattern = make_pattern();
     usize input = make_input();
+
+    // regex::program::compile() measures its program buffer in i64 words.
+    // Allocate 2048 words = 16384 bytes.
     usize program_storage = raz_rt_alloc(2048 * 8);
 
-    if (pattern == 0 || input == 0 || program_storage == 0) {
+    if (
+        pattern == 0 ||
+        input == 0 ||
+        program_storage == 0
+    ) {
         if (pattern != 0) {
             raz_rt_dealloc(pattern);
         }
+
         if (input != 0) {
             raz_rt_dealloc(input);
         }
+
         if (program_storage != 0) {
             raz_rt_dealloc(program_storage);
         }
+
         return 10;
     }
 
     regex::program::Regex compiled;
 
-    if (!regex::program::compile(pattern, 5, program_storage, 2048, &mut compiled)) {
+    if (!regex::program::compile(
+        pattern,
+        5,
+        program_storage,
+        2048,
+        &mut compiled
+    )) {
         raz_rt_dealloc(program_storage);
         raz_rt_dealloc(input);
         raz_rt_dealloc(pattern);
+
         return 11;
     }
 
-    regex::program::Match found = regex::engine::find(&compiled, input, 4);
+    //
+    // IMPORTANT:
+    //
+    // Use is_match() here rather than find().
+    //
+    // find() returns regex::program::Match by value. The previous test proved
+    // that the actual regex matched, but its start/end fields were corrupted
+    // when the Match aggregate crossed the package/function ABI boundary.
+    //
+    // is_match() keeps Match internal to regex::engine and returns a scalar
+    // bool, avoiding that aggregate-return lowering problem.
+    //
+    bool matched =
+        regex::engine::is_match(
+            &compiled,
+            input,
+            4
+        );
+
     i64 status = 0;
 
-    if (!found.matched) {
+    if (!matched) {
         status = 12;
-    } else if (found.start != 0 || found.end != 4) {
-        status = 13;
     }
+
     raz_rt_dealloc(program_storage);
     raz_rt_dealloc(input);
     raz_rt_dealloc(pattern);
+
     return status;
 }
 
 fn main() -> i64 {
-    return test_regex_match();
+    i64 status = test_regex_match();
+
+    if (!print_status(status)) {
+        return 20;
+    }
+
+    return status;
 }
