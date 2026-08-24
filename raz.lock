@@ -6,7 +6,7 @@ name = "raz-package-demo"
 version = "0.1.0"
 kind = "executable"
 path = "."
-manifest_hash = "6f625f46f146dc6f"
+manifest_hash = "6f206576b2678ee6"
 
 [[package]]
 name = "regex"
