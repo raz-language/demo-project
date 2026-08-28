@@ -3,11 +3,13 @@
 
 import regex::program;
 import regex::engine;
+import std::io::stdio;
 
 extern fn raz_rt_alloc(i64 size) -> usize;
 extern fn raz_rt_dealloc(usize pointer);
 extern fn raz_rt_store_u8(usize address, i64 value) -> i64;
 extern fn raz_rt_stdio_write(i64 stream, usize data, i64 size) -> i64;
+extern fn raz_rt_time_monotonic_nanos() -> i64;
 
 fn print_status(i64 status) -> bool {
     usize bytes = raz_rt_alloc(32);
@@ -207,6 +209,79 @@ fn test_regex_match() -> i64 {
     return status;
 }
 
+
+fn benchmark_kernel(i64 iterations) -> i64 {
+    // A deterministic integer workload that is large enough to expose native
+    // backend code-generation differences while staying quick enough to run as
+    // part of the normal demo. The checksum keeps the loop observable.
+    i64 state = 1;
+    i64 checksum = 0;
+    i64 index = 0;
+
+    while (index < iterations) {
+        state = (state * 48271) % 2147483647;
+        checksum += state & 1023;
+
+        if ((state & 7) == 0) {
+            checksum -= index & 31;
+        }
+
+        index += 1;
+    }
+
+    return checksum;
+}
+
+fn print_benchmark_metric(string label, i64 value) -> bool {
+    if (!std::io::stdio::print(label)) {
+        return false;
+    }
+
+    return std::io::stdio::println_i64(value);
+}
+
+fn run_backend_benchmark() -> bool {
+    i64 iterations = 10000000;
+
+    // Warm the process and make the warm-up observable through the final
+    // checksum so an optimizer cannot discard it as dead work.
+    i64 warmup_checksum = benchmark_kernel(100000);
+
+    i64 started_nanos = raz_rt_time_monotonic_nanos();
+    i64 checksum = benchmark_kernel(iterations);
+    i64 elapsed_nanos = raz_rt_time_monotonic_nanos() - started_nanos;
+
+    if (elapsed_nanos <= 0) {
+        return false;
+    }
+
+    checksum += warmup_checksum;
+
+    i64 nanos_per_iteration = elapsed_nanos / iterations;
+    i64 iterations_per_second = (iterations * 1000000000) / elapsed_nanos;
+
+    if (!std::io::stdio::println("native backend benchmark")) {
+        return false;
+    }
+    if (!print_benchmark_metric("  iterations: ", iterations)) {
+        return false;
+    }
+    if (!print_benchmark_metric("  elapsed_ns: ", elapsed_nanos)) {
+        return false;
+    }
+    if (!print_benchmark_metric("  ns_per_iteration: ", nanos_per_iteration)) {
+        return false;
+    }
+    if (!print_benchmark_metric("  iterations_per_second: ", iterations_per_second)) {
+        return false;
+    }
+    if (!print_benchmark_metric("  checksum: ", checksum)) {
+        return false;
+    }
+
+    return true;
+}
+
 fn main() -> i64 {
     i64 status = test_regex_match();
 
@@ -214,5 +289,13 @@ fn main() -> i64 {
         return 20;
     }
 
-    return status;
+    if (status != 0) {
+        return status;
+    }
+
+    if (!run_backend_benchmark()) {
+        return 21;
+    }
+
+    return 0;
 }
